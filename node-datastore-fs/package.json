@@ -1,0 +1,16 @@
+{
+  "name": "node-datastore-fs",
+  "version": "0.1.0",
+  "description": "Node file system data store support.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "extend": "*",
+    "mkdirp": "*"
+  },
+  "repository": "",
+  "author": "seykron",
+  "license": "BSD"
+}
