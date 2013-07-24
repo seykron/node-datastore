@@ -1,0 +1,21 @@
+{
+  "name": "node-datastore-p2p",
+  "version": "0.1.0",
+  "description": "Node p2p distributed data store.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo 'Nothing here'"
+  },
+  "dependencies": {
+    "node-uuid": "*",
+    "extend": "*",
+    "xmldoc": "*",
+    "winston": "*"
+  },
+  "devDependencies": {
+    "async": "*"
+  },
+  "repository": "git@github.com:seykron/node-datastore.git",
+  "author": "seykron",
+  "license": "BSD"
+}
