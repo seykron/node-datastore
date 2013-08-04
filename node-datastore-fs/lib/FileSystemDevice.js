@@ -100,8 +100,15 @@ module.exports = function FileSystemDevice (baseDir) {
      */
     get: function (item, callback) {
       var fullPath = buildFullPath(item);
-      item.stream = fs.createReadStream(fullPath);
-      callback(null, item);
+
+      if (fs.existsSync(fullPath)) {
+        item.stream = function () {
+          return fs.createReadStream(fullPath);
+        };
+        callback(null, item);
+      } else {
+        callback(new Error("Item not found: " + item.id), null);
+      }
     },
 
     /** Determines whether this device is available or not.
@@ -117,11 +124,21 @@ module.exports = function FileSystemDevice (baseDir) {
      *
      * @param {DataStoreItem} item Item to validate. Cannot be null.
      * @param {Function} callback Callback to notify whether the item exists or
-     *    not. It receives a boolean and the item as parameters. Cannot be null.
+     *    not. It receives a boolean as parameter. Cannot be null.
      */
     exists: function (item, callback) {
       var fullPath = buildFullPath(item);
       fs.exists(fullPath, callback);
+    },
+
+    /** Translates an item to a valid local path in the file system.
+     *
+     * @param {DataStoreItem} item Item to translate into local file system
+     *    directory. Cannot be null.
+     * @return {String} Returns the item full path. Never returns null or empty.
+     */
+    getFile: function (item) {
+      return buildFullPath(item);
     }
   });
 };

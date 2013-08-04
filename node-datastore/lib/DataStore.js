@@ -180,6 +180,7 @@ module.exports = function DataStore(index, devices, options) {
               hasError = true;
               return options.errorHandler(err, id, namespace, "save");
             }
+            fs.unlinkSync(swapFile);
             if (hasError) {
               callback(new Error("Item could not be sent to some devices"),
                 item);
@@ -214,7 +215,12 @@ module.exports = function DataStore(index, devices, options) {
             }
           });
         }, function (availableDevice) {
-          availableDevice.get(item, callback);
+          if (!availableDevice) {
+            callback(new Error(
+              "There's no available device to retrieve the item."))
+          } else {
+            availableDevice.get(item, callback);
+          }
         });
       });
     },

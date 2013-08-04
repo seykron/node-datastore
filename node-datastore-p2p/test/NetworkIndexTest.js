@@ -8,11 +8,12 @@ var INDEX2_DIR = path.join(require("os").tmpDir(), "node-datastore", "device1");
 
 var NetworkManager = require("../lib/NetworkManager");
 var NetworkIndex = require("../lib/NetworkIndex");
-var Peer = require("../lib/Peer");
 
 var networkManager = new NetworkManager();
 var index1;
 var index2;
+
+winston.setLevels(winston.config.syslog.levels);
 
 networkManager.initialize(function (err) {
   if (err) {
@@ -30,21 +31,12 @@ networkManager.initialize(function (err) {
   index1 = new NetworkIndex(INDEX1_DIR, networkManager);
   index2 = new NetworkIndex(INDEX2_DIR, networkManager);
 
-  winston.setLevels(winston.config.syslog.levels);
-
   async.series([
-    // Initializes both indexes.
-    function initIndexes(callback) {
-      async.parallel([
-        index1.initialize,
-        index2.initialize
-      ], callback);
-    },
     // Adds two nodes to the same peer network.
     function joinNetwork(callback) {
       async.parallel([
-        index1.join.bind(this, new Peer(index2.getLocalNode())),
-        index2.join.bind(this, new Peer(index1.getLocalNode()))
+        index1.join.bind(this, networkManager.getLocalNode()),
+        index2.join.bind(this, networkManager.getLocalNode())
       ], callback);
     },
     // Creates some random items.

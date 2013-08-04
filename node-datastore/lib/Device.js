@@ -48,7 +48,7 @@ module.exports = function Device (id) {
      *
      * @param {DataStoreItem} item Item to validate. Cannot be null.
      * @param {Function} callback Callback to notify whether the item exists or
-     *    not. It receives a boolean and the item as parameters. Cannot be null.
+     *    not. It receives a boolean as parameter. Cannot be null.
      */
     exists: function (item, callback) {
       throw new Error("Must be implemented by subclasses.");

@@ -41,7 +41,7 @@ module.exports = function Peer (rawPeer) {
     /** Peer listening port, it's never null.
      * @type {Number}
      */
-    port: peer.port || Math.floor(Math.random() * 12000 + 1024),
+    port: peer.port,
 
     /** Indicates whether this is a master node or not. Master nodes keep track
      * of peers in order to resolve dynamic addresses as the second lookup
@@ -55,6 +55,6 @@ module.exports = function Peer (rawPeer) {
     /** Peer ip address, it's never null after peer is ready.
      * @type {String}
      */
-    address: peer.address || null
+    address: peer.address
   });
 };
