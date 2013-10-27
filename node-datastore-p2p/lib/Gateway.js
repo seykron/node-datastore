@@ -1,10 +1,13 @@
 /** Simple uPnP Gateway device. It allows to map ports from external to internal
  * interfaces.
  *
+ * @param {String} [namespace] Namespace used to perform gateway operations.
+ *    It's used to scope operations so they can be invoked from another
+ *    instances.
  * @constructor
  * @see https://gist.github.com/acacio/1603181
  */
-module.exports = function Gateway() {
+module.exports = function Gateway(namespace) {
 
   /** SSDP service port.
    * @constant
@@ -53,6 +56,13 @@ module.exports = function Gateway() {
    * @fieldOf Gateway#
    */
   var OK = "HTTP/1.1 200 OK";
+
+  /** Namespace to scope gateway operations.
+   * @constant
+   * @private
+   * @fieldOf Gateway#
+   */
+  var NAMESPACE = namespace || "node:Gateway";
 
   /** Node's UDP API.
    * @private
@@ -177,24 +187,92 @@ module.exports = function Gateway() {
     findNext(new xmldoc.XmlDocument(responseXml));
   };
 
+  /** Creates a SOAP message to send it to the gateway.
+   *
+   * @param {String} action Gateway supported action. Cannot be null or empty.
+   * @param {Object} [params] Parameters required by the action. Can be null if
+   *    the action takes no parameters.
+   * @return {Object} Returns an object that represents a valid SOAP message,
+   *    never returns null.
+   * @private
+   * @methodOf Gateway#
+   */
+  var createMessage = function (action, params) {
+    var message = "<u:" + action + " xmlns:u=\"" + WANIP + "\">";
+    var data = params || {};
+    var paramName;
+    var value;
+
+    for (paramName in data) {
+      if (data.hasOwnProperty(paramName)) {
+        value = data[paramName] || "";
+        message += "<" + paramName + ">" + value + "</" + paramName + ">\n";
+      }
+    }
+    message += "</u:" + action + ">";
+
+    return {
+      action: action,
+      data: message
+    };
+  };
+
+  /** Returns the specified response attribute from raw Gateway's responese.
+   * @param {String} responseXml Gateway raw response. Cannot be null or empty.
+   * @param {String} attribName Name of the required attribute. Cannot be null
+   *    or empty.
+   * @return {String} Returns the response attribute as String, or null if the
+   *    attribute doesn't exist.
+   * @private
+   * @methodOf Gateway#
+   */
+  var getResponseAttribute = function (responseXml, attribName) {
+    var expr = new RegExp("<" + attribName + ">(.+?)<\/" + attribName + ">",
+      "i");
+    var value = responseXml && responseXml.match(expr);
+
+    return (value && value[1]) || null;
+  };
+
+  /** Translates the specified error response to an Error object.
+   *
+   * @param {String} responseXml uPnP device error response. Cannot be null or
+   *    empty.
+   * @return {Object} Returns an object with the error <code>code</code>
+   *    and <code>description</code>, never returns null.
+   * @private
+   * @methodOf Gateway#
+   */
+  var translateErrorResponse = function (responseXml) {
+    var code = getResponseAttribute(responseXml, "errorCode");
+    var description = getResponseAttribute(responseXml, "errorDescription");
+
+    return {
+      code: parseInt(code, 10),
+      description: description,
+      toError: function () {
+        return new Error(code + ":" + description);
+      }
+    };
+  };
+
   /** Sends a SOAP message to the gateway.
-   * @param {String} message A valid gateway message. Cannot be null or empty.
-   * @param {String} method Gateway method that handles the message. Cannot be
-   *    null or empty.
+   * @param {Object} message A valid gateway message created with
+   *    createMessage(). Cannot be null.
    * @param {Function} callback Callback invoked to receive the gateway
    *    response. It takes an error and the response string as parameters.
    *    Cannot be null.
    * @private
    * @methodOf Gateway#
    */
-  var sendSoapMessage = function (message, method, callback) {
+  var sendSoapMessage = function (message, callback) {
     var SOAP_ENV_PRE = "<?xml version=\"1.0\"?>\n<s:Envelope \n" +
       "xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \n" +
       "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">" +
       "<s:Body>\n";
     var SOAP_ENV_POST = "</s:Body>\n</s:Envelope>\n";
 
-    var requestXml = SOAP_ENV_PRE + message + SOAP_ENV_POST;
+    var requestXml = SOAP_ENV_PRE + message.data + SOAP_ENV_POST;
     var options = {
       hostname: addressInfo.hostname,
       port: addressInfo.port,
@@ -202,7 +280,7 @@ module.exports = function Gateway() {
       method: 'POST',
       headers: {
         "Host": addressInfo.hostname,
-        "SOAPACTION": "\"" + WANIP + "#" + method + "\"",
+        "SOAPACTION": "\"" + WANIP + "#" + message.action + "\"",
         "Content-Type": "text/xml",
         "Content-Length": requestXml.length
       }
@@ -210,16 +288,17 @@ module.exports = function Gateway() {
     var req = http.request(options, function (res) {
       var data = "";
 
-      if (res.statusCode !== 200) {
-        callback(new Error("Invalid SOAP action"));
-        return;
-      }
-
       res.on("data", function (chunk) {
         data += chunk.toString();
       });
       res.on("end", function () {
-        callback(null, data);
+        if (res.statusCode == 200){
+          callback(null, data);
+        } else if (res.statusCode === 500) {
+          callback(translateErrorResponse(data), null);
+        } else {
+          throw new Error("Invalid response status code: " + res.statusCode);
+        }
       });
     }).on('error', function (err) {
       callback(err);
@@ -252,6 +331,23 @@ module.exports = function Gateway() {
     }
 
     return addresses;
+  };
+
+  /** Closes a single port in the gateway.
+   * @param {String} protocol Port's enclosing protocol. Cannot be null.
+   * @param {Number} port Port to close. Cannot be null.
+   * @private
+   * @methodOf Gateway#
+   */
+  var closePort = function (protocol, port, callback) {
+    var message = createMessage("DeletePortMapping", {
+      NewRemoteHost: "",
+      NewExternalPort: port,
+      NewProtocol: protocol
+    });
+    sendSoapMessage(message, function (err, xml) {
+      callback(err);
+    });
   };
 
   /** Look-ups the gateway device and prepares it to start sending messages.
@@ -319,15 +415,13 @@ module.exports = function Gateway() {
      *    Cannot be null.
      */
     getExternalAddress: function (callback) {
-      var message = "<u:GetExternalIPAddress xmlns:u=\"" + WANIP + "\">" +
-        "</u:GetExternalIPAddress>\n";
+      var message = createMessage("GetExternalIPAddress");
 
-      sendSoapMessage(message, "GetExternalIPAddress", function (err, xml) {
+      sendSoapMessage(message, function (err, xml) {
         if (err) {
-          callback(err);
+          callback(err.toError());
         } else {
-          callback(null, xml
-            .match(/<NewExternalIPAddress>(.+?)<\/NewExternalIPAddress>/i)[1])
+          callback(null, getResponseAttribute(xml, "NewExternalIPAddress"));
         }
       });
     },
@@ -345,26 +439,109 @@ module.exports = function Gateway() {
         var message;
 
         if (!address || err) {
-          callback(err, res);
+          callback(err && err.toError(), res);
           return;
         }
 
-        message =
-          "<u:AddPortMapping xmlns:u=\"" + WANIP + "\">\n" +
-          "<NewRemoteHost></NewRemoteHost>\n" +
-          "<NewExternalPort>" + port + "</NewExternalPort>\n" +
-          "<NewProtocol>" + protocol + "</NewProtocol>\n" +
-          "<NewInternalPort>" + port + "</NewInternalPort>\n" +
-          "<NewInternalClient>" + address + "</NewInternalClient>\n" +
-          "<NewEnabled>1</NewEnabled>\n" +
-          "<NewPortMappingDescription>desc</NewPortMappingDescription>\n" +
-          "<NewLeaseDuration>0</NewLeaseDuration>\n" +
-          "</u:AddPortMapping>";
+        message = createMessage("AddPortMapping", {
+          NewRemoteHost: "",
+          NewExternalPort: port,
+          NewProtocol: protocol,
+          NewInternalPort: port,
+          NewInternalClient: address,
+          NewEnabled: 1,
+          NewPortMappingDescription: "desc",
+          NewLeaseDuration: 0
+        });
 
-        sendSoapMessage(message, "AddPortMapping",
-          addNextMapping.bind(this, addresses.shift()));
+        sendSoapMessage(message, addNextMapping.bind(this, addresses.shift()));
       };
       addNextMapping(addresses.shift());
+    },
+
+    /** Lists all opened ports.
+     *
+     * @param {Function} callback Callback that takes an error and a list of
+     *    existing mapping entries. Cannot be null.
+     */
+    listOpenPorts: function (callback) {
+      var entries = [];
+      var listNext = function (index) {
+        var message = createMessage("GetGenericPortMappingEntry", {
+          NewPortMappingIndex: index
+        });
+        sendSoapMessage(message, function (err, xml) {
+          var description;
+
+          if (err) {
+            if (err.code === 713){
+              // No more items, listing succeed.
+              callback(null, entries);
+            } else {
+              // Unknown error.
+              callback(err.toError(), null);
+            }
+          } else {
+            // Entry found, gets next entry.
+            description = getResponseAttribute(xml, "NewPortMappingDescription");
+
+            if (description === NAMESPACE) {
+              entries.push({
+                protocol: getResponseAttribute(xml, "NewProtocol"),
+                externalPort: getResponseAttribute(xml, "NewExternalPort"),
+                internalPort: getResponseAttribute(xml, "NewInternalPort"),
+                internalClient: getResponseAttribute(xml, "NewInternalClient"),
+                enabled: Boolean(getResponseAttribute(xml, "NewEnabled")),
+                namespace: description,
+                leaseDuration: getResponseAttribute(xml, "NewLeaseDuration")
+              });
+            }
+            listNext(index + 1);
+          }
+        });
+      };
+      listNext(0);
+    },
+
+    /** Closes a port previously opened by openPort().
+     *
+     * @param {String} [protocol] Port's enclosing protocol. If it's null, this
+     *    method closes all opened ports.
+     * @param {Number} [port] Port to close. If it's 0, this method closes all
+     *    ports of the specified procol.
+     * @param {Function} [callback] Callback to notify when ports were already
+     *    closed. It takes an error as parameter. Can be null.
+     */
+    closePort: function (protocol, port, callback) {
+      var mappings;
+      var closeNext = function (mapping, err) {
+        if (err || !mapping) {
+          callback(err);
+          return;
+        }
+        closePort(mapping.protocol, mapping.externalPort,
+          closeNext.bind(this, mappings.shift()));
+      };
+      if (protocol && port) {
+        closePort(protocol, port, callback);
+      } else {
+        this.listOpenPorts(function (err, entries) {
+          if (err) {
+            if (callback) {
+              callback(err);
+            }
+            return;
+          }
+          if (protocol) {
+            mappings = entries.filter(function (entry) {
+              return entry.protocol === protocol;
+            })
+          } else {
+            mappings = entries;
+          }
+          closeNext(mappings.shift());
+        });
+      }
     }
   }
 }

@@ -3,13 +3,16 @@ var path = require("path");
 var async = require("async");
 var winston = require("winston");
 
-var INDEX1_DIR = path.join(require("os").tmpDir(), "node-datastore", "device0");
-var INDEX2_DIR = path.join(require("os").tmpDir(), "node-datastore", "device1");
+var DS_DIR = path.join(require("os").tmpDir(), "node-datastore");
+var INDEX1_DIR = path.join(DS_DIR, "device0");
+var INDEX2_DIR = path.join(DS_DIR, "device1");
 
+var Swarm = require("../lib/Swarm");
 var NetworkManager = require("../lib/NetworkManager");
 var NetworkIndex = require("../lib/NetworkIndex");
 
-var networkManager = new NetworkManager();
+var swarm = new Swarm(DS_DIR);
+var networkManager = new NetworkManager(swarm);
 var index1;
 var index2;
 
@@ -32,13 +35,6 @@ networkManager.initialize(function (err) {
   index2 = new NetworkIndex(INDEX2_DIR, networkManager);
 
   async.series([
-    // Adds two nodes to the same peer network.
-    function joinNetwork(callback) {
-      async.parallel([
-        index1.join.bind(this, networkManager.getLocalNode()),
-        index2.join.bind(this, networkManager.getLocalNode())
-      ], callback);
-    },
     // Creates some random items.
     function createItems(callback) {
       async.parallel([

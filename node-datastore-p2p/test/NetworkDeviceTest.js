@@ -32,14 +32,10 @@ async.series([
     throw err;
   }
 
+  dataStore1.join(dataStore2.getLocalNode());
+  dataStore2.join(dataStore1.getLocalNode());
+
   async.series([
-    // Adds two nodes to the same peer network.
-    function joinNetwork(callback) {
-      async.parallel([
-        dataStore1.join.bind(this, dataStore2.getLocalNode()),
-        dataStore2.join.bind(this, dataStore1.getLocalNode())
-      ], callback);
-    },
     // Adds a file to the first data store.
     function createContent(callback) {
       var stream = fs.createReadStream(__dirname +

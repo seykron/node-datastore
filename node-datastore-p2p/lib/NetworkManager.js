@@ -1,8 +1,10 @@
-/** Manages peer network connections.
+/** Manages swarm connections and messages.
  *
+ * @param {Swarm} swarm Swarm to manage with this network manager. Cannot be
+ *    null.
  * @constructor
  */
-module.exports = function NetworkManager (namespace) {
+module.exports = function NetworkManager (swarm) {
 
   /** General-purpose timeout.
    * @constant
@@ -24,13 +26,6 @@ module.exports = function NetworkManager (namespace) {
    * @fieldOf NetworkManager#
    */
   var Gateway = require("./Gateway");
-
-  /** Point-to-point peer constructor.
-   * @type {Function}
-   * @private
-   * @fieldOf NetworkIndex#
-   */
-  var Peer = require("./Peer");
 
   /** Util to generate UUIDs.
    * @type {Object}
@@ -102,14 +97,6 @@ module.exports = function NetworkManager (namespace) {
    */
   var gateway = new Gateway();
 
-  /** Peer that represents the local machine. It's never null after
-   * initialize().
-   * @type {Peer}
-   * @private
-   * @fieldOf NetworkIndex#
-   */
-  var localNode;
-
   /** Sends a message to a peer.
    * @param {Peer} target Peer to send message to. Cannot be null.
    * @param {Object} message Message to send. Cannot be null.
@@ -146,7 +133,7 @@ module.exports = function NetworkManager (namespace) {
    * @methodOf NetworkManager#
    */
   var handlePeerRequest = function (request, peerInfo) {
-    var handlersStack = messageListeners[request.namespace];
+    var handlersStack = messageListeners[request.namespace] || [];
 
     handlersStack.forEach(function (handlers) {
       var listener = handlers && handlers[request.type];
@@ -201,22 +188,15 @@ module.exports = function NetworkManager (namespace) {
     }
   };
 
-  /** Returns a random port number. It doesn't check whether the port is being
-   * used or not.
-   * @return {Number} Returns a valid port number above 1024, never returns
-   *    null.
-   * @private
-   * @methodOf NetworkManager#
-   */
-  var randomPort = function () {
-    return Math.floor(Math.random() * 12000 + 1024);
-  };
-
   /** Creates the message server listening on the local node.
    * @param {Function} callback Callback invoked when the message server is up
    *    and running. It takes an error as parameter. Cannot be null.
+   * @private
+   * @methodOf NetworkManager#
    */
   var createMessageServer = function (callback) {
+    var localNode = swarm.getLocalNode();
+
     LOG.debug("Creating message server.");
 
     socket = dgram.createSocket("udp4", function (msg, rinfo) {
@@ -258,6 +238,8 @@ module.exports = function NetworkManager (namespace) {
    * @methodOf NetworkManager#
    */
   var initMessageServer = function (callback) {
+    var localNode = swarm.getLocalNode();
+
     LOG.debug("Acquiring port to listen on " + localNode.address +
       ":" + localNode.port);
 
@@ -284,11 +266,9 @@ module.exports = function NetworkManager (namespace) {
       if (err) {
         callback(err);
       } else {
-        localNode = new Peer({
-          address: address,
-          port: randomPort()
-        });
-        callback(err, localNode);
+        swarm.updateLocalNode(address);
+
+        callback(err, swarm.getLocalNode());
       }
     });
   };
@@ -340,40 +320,62 @@ module.exports = function NetworkManager (namespace) {
       messageListeners[namespace] = handlersStack;
     },
 
-    /** Creates and prepares a message to send it to another peers. Message
+    /** Creates and prepares a message to send it to a single peer. Message
      * is an event emitter and it will trigger a 'response' event when a single
      * peer response arrives. The 'response' event takes an error, the peer and
      * the raw response as parameters.
      *
      * @param {String} namespace Namespace that's sending the message. Cannot be
      *    null or empty.
-     * @param {Peer} targets Peers receiving the message. Cannot be null.
+     * @param {Peer} target Peer to send message to. Cannot be null.
      * @param {String} type Message type. Must be unique in the namespace.
      *    Cannot be null or empty.
      * @param {Object} data Message raw data. Can be null.
      * @param {Object} [options] Message specific options. Can be null.
-     * @param {Boolean} [options.broadcast] Indicates whether the message is a
-     *    broadcast. Default is false.
      * @param {Boolean} [options.error] Error object. If this field is present,
      *    the message must be considered an error. Can be null.
      * @return {EventEmitter} Returns the message object ready to be sent, never
      *    returns null.
      */
-    createMessage: function (namespace, targets, type, data, options) {
+    createMessage: function (namespace, target, type, data, options) {
       var message = {
-        targets: [].concat(targets),
+        targets: [target],
         request: {
           id: uuid.v4(),
           namespace: namespace,
-          source: localNode.id,
+          source: swarm.getLocalNode().id,
           error: options && options.error,
-          broadcast: options && options.broadcast,
+          broadcast: false,
           ping: true,
           type: type,
           data: data
         }
       };
       return extend(new events.EventEmitter(), message);
+    },
+
+    /** Creates a broadcast message to send to the swarm.
+     *
+     * @param {String} namespace Namespace that's sending the message. Cannot be
+     *    null or empty.
+     * @param {String} type Message type. Must be unique in the namespace.
+     *    Cannot be null or empty.
+     * @param {Object} data Message raw data. Can be null.
+     * @param {Object} [options] Message specific options. Can be null.
+     * @param {Boolean} [options.error] Error object. If this field is present,
+     *    the message must be considered an error. Can be null.
+     * @return {EventEmitter} Returns the message object as it is specified in
+     *    createMessage() method's documentation.
+     */
+    createBroadcastMessage: function (namespace, type, data, options) {
+      var message = this.createMessage(namespace, null, type, data, options);
+
+      extend(message.request, {
+        broadcast: true
+      });
+      return extend(message, {
+        targets: [].concat(swarm.getPeers())
+      });
     },
 
     /** Sends a message and notifies responses.
@@ -407,7 +409,7 @@ module.exports = function NetworkManager (namespace) {
      *    It takes an error and the server port as parameters. Cannot be null.
      */
     createHttpServer: function (requestListener, callback) {
-      var port = randomPort();
+      var port = Math.floor(Math.random() * 12000 + 1024);
 
       gateway.openPort("tcp", port, function (err) {
         var server = http.createServer(requestListener);
@@ -425,16 +427,6 @@ module.exports = function NetworkManager (namespace) {
         server.listen(port);
         callback(null, port);
       });
-    },
-
-    /** Returns the current node (the one representing the local machine) from
-     * the index.
-     *
-     * @return {Peer} Returns the peer that represents the local machine. It
-     *    never returns null after initialize();
-     */
-    getLocalNode: function () {
-      return localNode;
     }
   };
 };

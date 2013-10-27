@@ -100,6 +100,8 @@ module.exports = function NetworkDevice (baseDir, networkManager, index) {
       var rawItem = request.data;
       var item = new DataStoreItem(rawItem.id, rawItem.metadata, rawItem.status);
 
+      LOG.debug("Received get(" + rawItem.id + ") message from network.");
+
       get(item, function (err, item) {
         if (err) {
           callback(err);
@@ -123,25 +125,21 @@ module.exports = function NetworkDevice (baseDir, networkManager, index) {
    * @methodOf NetworkDevice#
    */
   var findItemAndWait = function (item, callback) {
-    index.getPeers(function (err, nodes) {
-      var message = networkManager.createMessage(DEVICE_ID, nodes, "nd:get", {
-        id: item.getId(),
-        metadata: item.getMetadata(),
-        status: item.status(base)
-      }, {
-        broadcast: true
-      });
-      var done = false;
-
-      message.on("error", callback);
-      message.on("response", function (peer, response) {
-        if (!done) {
-          done = true;
-          callback(null, peer, response);
-        }
-      });
-      networkManager.send(message);
+    var message = networkManager.createBroadcastMessage(DEVICE_ID, "nd:get", {
+      id: item.getId(),
+      metadata: item.getMetadata(),
+      status: item.status(base)
     });
+    var done = false;
+
+    message.on("error", callback);
+    message.on("response", function (peer, response) {
+      if (!done) {
+        done = true;
+        callback(null, peer, response);
+      }
+    });
+    networkManager.send(message);
   };
 
   /** Sets up the item's readable stream to take content from the specified
@@ -167,7 +165,6 @@ module.exports = function NetworkDevice (baseDir, networkManager, index) {
       port: serverInfo.port,
       path: "/",
       headers: {
-        target: peer.id,
         item: JSON.stringify({
           id: item.getId(),
           metadata: item.getMetadata(),
@@ -214,25 +211,25 @@ module.exports = function NetworkDevice (baseDir, networkManager, index) {
   /** Initializes the HTTP server to send requested files.
    * @param {Function} initCallback Callback invoked when the content server is
    *    ready. Cannot be null.
+   * @private
+   * @methodOf NetworkDevice#
    */
   var initServer = function (initCallback) {
     networkManager.createHttpServer(function (req, res) {
       var rawItem = JSON.parse(req.headers.item);
       var item = new DataStoreItem(rawItem.id, rawItem.metadata, rawItem.status);
 
-      if (req.headers.target === networkManager.getLocalNode().id) {
-        LOG.debug("Download request received from " + req.socket.remoteAddress +
-          ":" + req.socket.remotePort);
+      LOG.debug("Received HTTP GET /" + rawItem.id + " from " +
+        req.socket.remoteAddress + ":" + req.socket.remotePort);
 
-        get(item, function (err) {
-          if (err) {
-            res.writeHead(500);
-            res.end(err.message);
-          } else {
-            item.stream().pipe(res);
-          }
-        });
-      }
+      get(item, function (err) {
+        if (err) {
+          res.writeHead(500);
+          res.end(err.message);
+        } else {
+          item.stream().pipe(res);
+        }
+      });
     }, function (err, port) {
       serverPort = port;
       initCallback(err);

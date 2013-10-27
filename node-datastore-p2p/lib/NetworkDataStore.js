@@ -37,12 +37,27 @@ module.exports = function NetworkDataStore(baseDir) {
    */
   var DataStore = require("../../node-datastore/lib/DataStore");
 
+  /** Represents the p2p network.
+   * @type {Function}
+   * @private
+   * @fieldOf NetworkDataStore#
+   */
+  var Swarm = require("./Swarm");
+
   /** Util to extend objects.
    * @type Function
    * @private
    * @fieldOf NetworkDataStore#
    */
   var extend = require("extend");
+
+  /** Manages peers in the current network.
+   *
+   * @type Object
+   * @private
+   * @fieldOf NetworkDataStore#
+   */
+  var swarm = new Swarm(baseDir);
 
   /** Network data store instance.
    * @private
@@ -64,7 +79,7 @@ module.exports = function NetworkDataStore(baseDir) {
    * @private
    * @fieldOf NetworkDataStore#
    */
-  var networkManager = new NetworkManager();
+  var networkManager = new NetworkManager(swarm);
 
   return extend(dataStore, {
 
@@ -100,7 +115,7 @@ module.exports = function NetworkDataStore(baseDir) {
      *    to the peer network. It takes an error as parameter. Cannot be null.
      */
     join: function (peer, callback) {
-      index.join(peer, callback);
+      swarm.join(peer, callback);
     },
 
     /** Removes the specified node from the peer network. Data related to the
@@ -111,7 +126,7 @@ module.exports = function NetworkDataStore(baseDir) {
      *    from the peer network. It takes an error as parameter. Cannot be null.
      */
     leave: function (peer, callback) {
-      index.leave(peer, callback);
+      swarm.leave(peer, callback);
     },
 
     /** Returns the current node (the one representing the local machine) from
@@ -121,7 +136,7 @@ module.exports = function NetworkDataStore(baseDir) {
      *    never returns null after initialize();
      */
     getLocalNode: function () {
-      return networkManager.getLocalNode();
+      return swarm.getLocalNode();
     }
   });
 };
